@@ -1,0 +1,115 @@
+****************************************
+train.py
+****************************************
+
+create_paths(test = False)			[utils.py]
+
+get_train_val_dataloader()			[dataset.py]
+	data_csv_gen()
+		data_split()
+		save_csv()
+	patch_images()
+		save_patch_idx()
+			class_percentage_check()
+		write_json()
+	Augment() -> Class
+		call()
+			read_img()
+	MyDataset() -> Class
+		__getitem__()
+			read_img()
+			transform_data()
+		get_random_data()
+			read_img()
+			transform_data()
+
+get_metrics()				[metrics.py]
+	MyMeanIOU() -> Class
+
+focal_loss()				[loss.py]
+
+get_model_transfer_lr(model, num_classes)	[model.py]
+
+get_model()				[model.py]
+	models -> call all model functions
+
+SelectCallbacks() -> Class			[utils.py]
+	__init__()
+	lr_scheduler()
+	on_epoch_end()
+		val_show_predictions()
+			read_img()
+			transform_data()
+			display()
+	get_callbacks()
+
+
+
+****************************************
+test.py (evaluation = False)
+****************************************
+
+create_paths()
+
+get_test_dataloader()
+	data_csv_gen()
+		data_split()
+		save_csv()
+
+	patch_images()
+		save_patch_idx()
+			class_percentage_check()
+		write_json()
+
+	MyDataset() -> Class
+		__getitem__()
+			read_img()
+			transform_data()
+		get_random_data()
+			read_img()
+			transform_data()
+
+test_eval_show_predictions()*
+	read_img()
+	transform_data()
+	display()
+
+
+get_metrics()
+
+frame_to_video()*
+
+****************************************
+test.py (evaluation = True)
+****************************************
+
+create_paths()
+
+get_test_dataloader()
+	eval_csv_gen()*
+		video_to_frame()*
+		save_csv()
+
+	patch_images()
+		save_patch_idx()
+			class_percentage_check()
+		write_json()
+
+	MyDataset() -> Class
+		__getitem__()
+			read_img()
+			transform_data()
+		get_random_data()
+			read_img()
+			transform_data()
+
+test_eval_show_predictions()*
+	read_img()
+	transform_data()
+	display_label()*
+	display()
+
+
+get_metrics()
+
+frame_to_video()*

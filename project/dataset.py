@@ -1,0 +1,967 @@
+import os
+import cv2
+import math
+import json
+import rasterio
+import matplotlib
+import numpy as np
+import pandas as pd
+from config import *
+import config
+import tensorflow as tf
+import albumentations as A
+from sklearn.model_selection import train_test_split
+from tensorflow.keras.utils import to_categorical, Sequence
+
+# from utils import video_to_frame
+matplotlib.use("Agg")
+
+#only for SAR
+label_norm =   {'vv':["_vv.tif", -12.204613877277495, 4.0422273221629785],
+                'vh':["_vh.tif",-18.96970667660666, 4.367189151420688],
+                'nasadem':["_nasadem.tif",812.64422736, 425.41858324129265],
+                'jrc-gsw-change':["_jrc-gsw-change.tif", 238.76, 5.15],
+                'jrc-gsw-extent':["_jrc-gsw-extent.tif", 2.15, 22.71],
+                'jrc-gsw-occurrence':["_jrc-gsw-occurrence.tif", 6.50, 29.06],
+                'jrc-gsw-recurrence':["_jrc-gsw-recurrence.tif", 10.04, 33.21],
+                'jrc-gsw-seasonality':["_jrc-gsw-seasonality.tif", 2.60, 22.79],
+                'jrc-gsw-transitions':["_jrc-gsw-transitions.tif", 0.55, 1.94]}
+
+def transform_data(label, num_classes):
+    """
+    Summary:
+        transform label/mask into one hot matrix and return
+    Arguments:
+        label (arr): label/mask
+        num_classes (int): number of class in label/mask
+    Return:
+        one hot label matrix
+    """
+    # return the label as one hot encoded
+    return to_categorical(label, num_classes)
+
+
+def read_img(directory, in_channels=None, label=False, patch_idx=None, height=256, width=256):
+    """
+    Summary:
+        read image with rasterio and normalize the feature
+    Arguments:
+        directory (str): image path to read
+        in_channels (bool): number of channels to read
+        label (bool): TRUE if the given directory is mask directory otherwise False
+        patch_idx (list): patch indices to read
+    Return:
+        numpy.array
+    """
+
+    # for musk images
+    if label:
+        mask = cv2.imread(directory)
+        mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+        
+        mask[mask == 0] = 0
+        mask[mask == 255] = 1
+        mask[mask == 170] = 2
+        mask[mask == 85] = 2
+        
+        if patch_idx:
+            # extract patch from original mask
+            return mask[patch_idx[0]:patch_idx[1], patch_idx[2]:patch_idx[3]]
+        else:
+            return mask #np.expand_dims(mask, axis=2)
+    # for features images
+    else:
+        # read N number of channels
+        X = cv2.imread(directory)
+
+        if patch_idx:
+            # extract patch from original features
+            return X[patch_idx[0]:patch_idx[1], patch_idx[2]:patch_idx[3], :]
+        else:
+            return X
+
+# #this read_img for SAR data
+# def read_img(directory, in_channels=config.in_channels, label=False, patch_idx=None, height=None, width=None):
+#     """
+#     Summary:
+#         read image with rasterio and normalize the feature
+#     Arguments:
+#         directory (str): image path to read
+#         in_channels (bool): number of channels to read
+#         label (bool): TRUE if the given directory is mask directory otherwise False
+#         patch_idx (list): patch indices to read
+#     Return:
+#         numpy.array
+#     """
+    
+#     # for mask images
+#     if label:
+#         with rasterio.open(directory) as fmask: # opening the directory
+#             mask = fmask.read(1)    # read the image (Data from a raster band can be accessed by the band’s index number. Following the GDAL convention, bands are indexed from 1. [int or list, optional] – If indexes is a list, the result is a 3D array, but is a 2D array if it is a band index number.)
+#             mask[mask == 2.0] = 0   # convert unlabeled to non-water
+#             mask[mask == 1.0] = 1  # convert unlabeled to non-water
+        
+#             if patch_idx:   # if patch is true then returning the extracted patch from mask else returning the whole mask
+#                 return mask[patch_idx[0]:patch_idx[1], patch_idx[2]:patch_idx[3]] # extract patch from original mask
+#             else:
+#                 return mask
+#     # for features images
+#     else:
+#         if channel_type == 'rgb':
+#             X = cv2.imread(directory)
+#         else:
+#             with rasterio.open((directory+label_norm['vv'][0])) as f:   # opening the image from the directory with channel name
+#                 height, width = f.shape
+#             X = np.zeros((height,width, in_channels)) # get a numpy array of image size
+#             #to run a single input channel change the value of i according to label_norm dictornay
+#             for i in channel_type:    # read N number of channels
+#                 tmp_ext = label_norm[i][0]  # get the name of channel (label_norm is dictonary containing {channel name, norm_val_1, norm_val_2})
+#                 with rasterio.open((directory+tmp_ext)) as f:   # opening the image from the directory with channel name
+#                     fea = f.read(1)
+#                 # to run a single input channel put X[:, :, 0]  Also change the show_prediction and patch_show_prediction in utils.py
+#                 X[:,:,channel_type.index(i)] = (fea - label_norm[i][1]) / label_norm[i][2]  # normalizing the data
+        
+            
+        
+            
+#         if patch_idx:   # if patch is true then returning the extracted patch from image else returning the whole image
+#             return X[patch_idx[0]:patch_idx[1], patch_idx[2]:patch_idx[3],:] # extract patch from original image
+#         else:
+#             return X
+
+
+def data_split(images, masks):
+    """
+    Summary:
+        split dataset into train, valid and test
+    Arguments:
+        images (list): all image directory list
+        masks (list): all mask directory
+    Return:
+        return the split data.
+    """
+    # spliting training data
+    x_train, x_rem, y_train, y_rem = train_test_split(
+        images, masks, train_size=train_size, random_state=42
+    )
+    # spliting test and validation data
+    x_valid, x_test, y_valid, y_test = train_test_split(
+        x_rem, y_rem, test_size=0.5, random_state=42
+    )
+    return x_train, y_train, x_valid, y_valid, x_test, y_test
+
+
+def save_csv(dictionary, name):
+    """
+    Summary:
+        save csv file
+    Arguments:
+        dictionary (dict): data as a dictionary object
+        name (str): file name to save
+    Return:
+        save file
+    """
+    # check for target directory
+    if not os.path.exists(root_dir / "data/csv"):
+        try:
+            os.makedirs(root_dir / "data/csv")  # making target directory
+        except Exception as e:
+            print(e)
+            raise
+    # converting dictionary to pandas dataframe
+    df = pd.DataFrame.from_dict(dictionary)
+    # from dataframe to csv
+    df.to_csv((root_dir / "data/csv" / name), index=False, header=True)
+
+
+def video_to_frame():
+    """
+    Summary:
+        create frames from video
+    Arguments:
+        empty
+    Return:
+        frames
+    """
+
+    vidcap = cv2.VideoCapture(video_path)
+    success, image = vidcap.read()
+    count = 0
+    while success:
+        cv2.imwrite(
+            root_dir + "/data/video_frame" + "/frame_%06d.jpg" % count, image
+        )  # save frame as JPEG file
+        success, image = vidcap.read()
+        count += 1
+
+
+def data_csv_gen():
+    """
+    Summary:
+        spliting data into train, test, valid
+    Arguments:
+        empty
+    Return:
+        save file
+    """
+    images = []
+    masks = []
+
+    image_path = dataset_dir / "input"
+    mask_path = dataset_dir / "groundtruth"
+    image_names = os.listdir(image_path)
+    image_names = sorted(image_names)
+    mask_names = os.listdir(mask_path)
+    mask_names = sorted(mask_names)
+
+    for i in image_names:
+        images.append(image_path / i)
+    for i in mask_names:
+        masks.append(mask_path / i)
+
+    x_train, y_train, x_valid, y_valid, x_test, y_test = data_split(images, masks)
+
+    # creating dictionary for train, test and validation
+    train = {"feature_ids": x_train, "masks": y_train}
+    valid = {"feature_ids": x_valid, "masks": y_valid}
+    test = {"feature_ids": x_test, "masks": y_test}
+
+    # saving dictionary as csv files
+    save_csv(train, "train.csv")
+    save_csv(valid, "valid.csv")
+    save_csv(test, "test.csv")
+        
+# def data_csv_gen():
+#     """
+#     Summary:
+#         spliting data into train, test, valid
+#     Arguments:
+#         empty
+#     Return:
+#         save file
+#     """
+#     images = []
+#     masks = []
+#     data_path = dataset_dir
+#     path_list = os.listdir(data_path)
+#     # Iterate through files in the specified directory
+#     for filename in sorted(path_list):
+#         # Check if the file ends with _vv.tif or _vh.tif or _nasadem.tif
+#         if filename.endswith(('_vv.tif', '_vh.tif', '_nasadem.tif')):
+#             # Append the filename to images list after removing the suffix
+#             image_name = filename.replace('_vv.tif', '').replace('_vh.tif', '').replace('_nasadem.tif', '')
+#             if image_name not in images:
+#                 images.append(image_name)
+#         else:
+#             masks.append(filename)
+
+#     new_images = [f"{data_path}/{image_name}" for image_name in images]
+#     new_masks = [f"{data_path}/{image_name}" for image_name in masks]
+
+#     x_train, y_train, x_valid, y_valid, x_test, y_test = data_split(new_images, new_masks)
+
+#     # creating dictionary for train, test and validation
+#     train = {"feature_ids": x_train, "masks": y_train}
+#     valid = {"feature_ids": x_valid, "masks": y_valid}
+#     test = {"feature_ids": x_test, "masks": y_test}
+
+#     # saving dictionary as csv files
+#     save_csv(train, "train.csv")
+#     save_csv(valid, "valid.csv")
+#     save_csv(test, "test.csv")
+
+
+def eval_csv_gen():
+    """
+    Summary:
+        for evaluation generate frame from video if video path is given and create csv file from testing folder
+    Arguments:
+        empty
+    Return:
+        csv file
+    """
+
+    data_path = dataset_dir
+    images = []
+
+    # video is provided then it will generate frame from video
+    # if video_path != "None":
+    #     video_to_frame()
+    #     image_path = dataset_dir / "video_frame"
+
+    # else:
+    #     image_path = data_path
+    image_path = data_path
+
+    image_names = os.listdir(image_path / 'input')
+    image_names = sorted(image_names)
+
+    for i in image_names:
+        images.append(image_path /"input"/ i)
+
+    # creating dictionary for train, test and validation
+    eval = {"feature_ids": images, "masks": images}
+
+    # saving dictionary as csv files
+    save_csv(eval, "eval.csv")
+
+# def eval_csv_gen():
+#     """
+#     Summary:
+#         for evaluation generate frame from video if video path is given and create csv file from testing folder
+#     Arguments:
+#         empty
+#     Return:
+#         csv file
+#     """
+#     images = []
+#     masks = []
+#     data_path = dataset_dir
+#     path_list = os.listdir(data_path)
+#     # Iterate through files in the specified directory
+#     for filename in sorted(path_list):
+#         # Check if the file ends with _vv.tif or _vh.tif or _nasadem.tif
+#         if filename.endswith(('_vv.tif', '_vh.tif', '_nasadem.tif')):
+#             # Append the filename to images list after removing the suffix
+#             image_name = filename.replace('_vv.tif', '').replace('_vh.tif', '').replace('_nasadem.tif', '')
+#             if image_name not in images:
+#                 images.append(image_name)
+#         else:
+#             masks.append(filename)
+
+#     new_images = [f"{data_path}/{image_name}" for image_name in images]
+#     new_masks = [f"{data_path}/{image_name}" for image_name in masks]
+#     # creating dictionary for train, test and validation
+#     eval = {"feature_ids": new_images, "masks": new_masks}
+#     # saving dictionary as csv files
+#     save_csv(eval, "eval.csv")
+
+
+def class_percentage_check(label):
+    """
+    Summary:
+        check class percentage of a single mask image
+    Arguments:
+        label (numpy.ndarray): mask image array
+    Return:
+        dict object holding percentage of each class
+    """
+    # calculating total pixels
+    total_pix = label.shape[0] * label.shape[0]
+    # get the total number of pixel labeled as 1
+    class_one = np.sum(label)
+    # get the total number of pixel labeled as 0
+    class_zero_p = total_pix - class_one
+    # return the pixel percent of each class
+    return {
+        "zero_class": ((class_zero_p / total_pix) * 100),
+        "one_class": ((class_one / total_pix) * 100),
+    }
+
+
+def save_patch_idx(path, patch_size=256, stride=8, test=None, patch_class_balance=None):
+    """
+    Summary:
+        finding patch image indices for single image based on class percentage. work like convolutional layer
+    Arguments:
+        path (str): image path
+        patch_size (int): size of the patch image
+        stride (int): how many stride to take for each patch image
+    Return:
+        list holding all the patch image indices for a image
+    """
+    # read the image
+    img = cv2.imread(path)
+    print(".........")
+    print(path)
+    print(type(img))
+    print(img.shape)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    
+    img[img == 0] = 0
+    img[img == 255] = 1
+    img[img == 170] = 2
+    img[img == 85] = 2
+    # img = np.where((img<105) | (img>105), 0, 1)
+
+    # calculating number patch for given image
+    # [{(image height-patch_size)/stride}+1]
+    patch_height = int((img.shape[0]-patch_size)/stride) + 1
+    # [{(image weight-patch_size)/stride}+1]
+    patch_weight = int((img.shape[1]-patch_size)/stride) + 1
+
+    # total patch images = patch_height * patch_weight
+    patch_idx = []
+
+    # image column traverse
+    for i in range(patch_height+1):
+        # get the start and end row index
+        s_row = i*stride
+        e_row = s_row+patch_size
+        
+        if e_row > img.shape[0]:
+            s_row = img.shape[0] - patch_size
+            e_row = img.shape[0]
+        
+        if e_row <= img.shape[0]:
+
+            # image row traverse
+            for j in range(patch_weight+1):
+                # get the start and end column index
+                start = (j*stride)
+                end = start+patch_size
+                
+                if end > img.shape[1]:
+                    start = img.shape[1] - patch_size
+                    end = img.shape[1]
+                
+                if end <= img.shape[1]:
+                    tmp = img[s_row:e_row, start:end]  # slicing the image
+                    percen = class_percentage_check(
+                        tmp)  # find class percentage
+
+                    # take all patch for test images
+                    if not patch_class_balance or test == 'test':
+                        patch_idx.append([s_row, e_row, start, end])
+
+                    # store patch image indices based on class percentage
+                    else:
+                        if percen["one_class"] > 19.0:
+                            patch_idx.append([s_row, e_row, start, end])
+                            
+                if end==img.shape[1]:
+                    break
+            
+        if e_row==img.shape[0]:
+            break  
+            
+    return patch_idx
+
+
+def write_json(target_path, target_file, data):
+    """
+    Summary:
+        save dict object into json file
+    Arguments:
+        target_path (str): path to save json file
+        target_file (str): file name to save
+        data (dict): dictionary object holding data
+    Returns:
+        save json file
+    """
+    # check for target directory
+    if not os.path.exists(target_path):
+        try:
+            os.makedirs(target_path)  # making target directory
+        except Exception as e:
+            print(e)
+            raise
+    # writing the jason file
+    with open(os.path.join(target_path, target_file), "w") as f:
+        json.dump(data, f)
+
+
+def patch_images(data, name):
+    """
+    Summary:
+        save all patch indices of all images
+    Arguments:
+        data: data file contain image paths
+        name (str): file name to save patch indices
+    Returns:
+        save patch indices into file
+    """
+    img_dirs = []
+    masks_dirs = []
+    all_patch = []
+
+    # loop through all images
+    for i in range(len(data)):
+        # fetching patch indices
+        patches = save_patch_idx(
+            data.masks.values[i],
+            patch_size=patch_size,
+            stride=stride,
+            test=name.split("_")[0],
+            patch_class_balance=patch_class_balance,
+        )
+
+        # generate data point for each patch image
+        for patch in patches:
+            img_dirs.append(data.feature_ids.values[i])
+            masks_dirs.append(data.masks.values[i])
+            all_patch.append(patch)
+    # dictionary for patch images
+    temp = {"feature_ids": img_dirs, "masks": masks_dirs, "patch_idx": all_patch}
+
+    # save data
+    write_json((root_dir / "data/json/"), (name + str(patch_size)+"_" + str(stride) + ".json"), temp)
+
+
+# Data Augment class
+# ----------------------------------------------------------------------------------------------
+class Augment:
+    def __init__(self, batch_size, channels, ratio=0.3, seed=42):
+        super().__init__()
+        """
+        Summary:
+            initialize class variables
+        Arguments:
+            batch_size (int): how many data to pass in a single step
+            ratio (float): percentage of augment data in a single batch
+            seed (int): both use the same seed, so they'll make the same random changes.
+        Return:
+            class object
+        """
+
+        self.ratio = ratio
+        self.channels = channels
+        self.aug_img_batch = math.ceil(batch_size * ratio)
+        self.aug = A.Compose(
+            [
+                A.VerticalFlip(p=0.5),
+                A.HorizontalFlip(p=0.5),
+                A.RandomRotate90(p=0.5),
+                A.Blur(p=0.5),
+            ]
+        )
+
+    def call(self, feature_dir, label_dir, patch_idx=None):
+        """
+        Summary:
+            randomly select a directory and augment data
+            from that specific image and mask
+        Arguments:
+            feature_dir (list): all train image directory list
+            label_dir (list): all train mask directory list
+        Return:
+            augmented image and mask
+        """
+
+        # choose random number from given limit
+        aug_idx = np.random.randint(0, len(feature_dir), self.aug_img_batch)
+        features = []
+        labels = []
+        # get the augmented features and masks
+        for i in aug_idx:
+            # get the patch image and mask
+            if patch_idx:
+                img = read_img(
+                    feature_dir[i], in_channels=self.channels, patch_idx=patch_idx[i]
+                )
+                mask = read_img(label_dir[i], label=True, patch_idx=patch_idx[i])
+
+            # commented out by manik (as patch_idx is false, it's CFR or CFR_CB, so it's deprecated)
+            else:
+                # get the image and mask
+                img = read_img(feature_dir[i], in_channels=self.channels)
+                mask = read_img(label_dir[i], label=True)
+
+            # augment the image and mask
+            augmented = self.aug(image=img, mask=mask)
+            features.append(augmented["image"])
+            labels.append(augmented["mask"])
+        return features, labels
+
+
+# Dataloader class
+# ----------------------------------------------------------------------------------------------
+
+
+class MyDataset(Sequence):
+    def __init__(
+        self,
+        img_dir,
+        tgt_dir,
+        in_channels,
+        batch_size,
+        num_class,
+        patchify,
+        transform_fn=None,
+        augment=None,
+        weights=None,
+        patch_idx=None,
+    ):
+        """
+        Summary:
+            initialize class variables
+        Arguments:
+            img_dir (list): all image directory
+            tgt_dir (list): all mask/ label directory
+            in_channels (int): number of input channels
+            batch_size (int): how many data to pass in a single step
+            patchify (bool): set TRUE if patchify experiment
+            transform_fn (function): function to transform mask images for training
+            num_class (int): number of class in mask image
+            augment (object): Augment class object
+            weight (list): class weight for imblance class
+            patch_idx (list): list of patch indices
+        Return:
+            class object
+        """
+
+        self.img_dir = img_dir
+        self.tgt_dir = tgt_dir
+        self.patch_idx = patch_idx
+        self.patchify = patchify
+        self.in_channels = in_channels
+        self.transform_fn = transform_fn
+        self.batch_size = batch_size
+        self.num_class = num_class
+        self.augment = augment
+        self.weights = weights
+
+    def __len__(self):
+        """
+        return total number of batch to travel full dataset
+        """
+        # getting the length of batches
+        # return math.ceil(len(self.img_dir) // self.batch_size)
+        return len(self.img_dir) // self.batch_size
+
+    def __getitem__(self, idx):
+        """
+        Summary:
+            create a single batch for training
+        Arguments:
+            idx (int): sequential batch number
+        Return:
+            images and masks as numpy array for a single batch
+        """
+
+        # get index for single batch
+        batch_x = self.img_dir[idx * self.batch_size : (idx + 1) * self.batch_size]
+        batch_y = self.tgt_dir[idx * self.batch_size : (idx + 1) * self.batch_size]
+
+        # get patch index for single batch
+        if self.patchify:
+            batch_patch = self.patch_idx[
+                idx * self.batch_size : (idx + 1) * self.batch_size
+            ]
+
+        imgs = []
+        tgts = []
+        # get all image and target for single batch
+        for i in range(len(batch_x)):
+            if self.patchify:
+                # get image from the directory
+                imgs.append(
+                    read_img(
+                        batch_x[i],
+                        in_channels=self.in_channels,
+                        patch_idx=batch_patch[i],
+                    )
+                )
+                # transform mask for model (categorically)
+                if self.transform_fn:
+                    tgts.append(
+                        self.transform_fn(
+                            read_img(batch_y[i], label=True, patch_idx=batch_patch[i]),
+                            self.num_class,
+                        )
+                    )
+                # get the mask without transform
+                else:
+                    tgts.append(
+                        read_img(batch_y[i], label=True, patch_idx=batch_patch[i])
+                    )
+
+            # commented out by manik (as patchify is false, it's CFR or CFR_CB, so it's deprecated)
+            else:
+                imgs.append(read_img(batch_x[i], in_channels=self.in_channels))
+                # transform mask for model (categorically)
+                if self.transform_fn:
+                    tgts.append(
+                        self.transform_fn(
+                            read_img(batch_y[i], label=True), self.num_class
+                        )
+                    )
+
+                # get the mask without transform
+                else:
+                    tgts.append(read_img(batch_y[i], label=True))
+
+        # augment data using Augment class above if augment is true
+        if self.augment:
+            if self.patchify:
+                aug_imgs, aug_masks = self.augment.call(
+                    self.img_dir, self.tgt_dir, self.patch_idx
+                )  # augment patch images and mask randomly
+                imgs = imgs + aug_imgs  # adding augmented images
+
+            # commented out by manik (as patchify is false it's CFR or CFR_CB, so it's deprecated)
+            else:
+                aug_imgs, aug_masks = self.augment.call(
+                    self.img_dir, self.tgt_dir
+                )  # augment images and mask randomly
+                imgs = imgs + aug_imgs  # adding augmented images
+
+            # transform mask for model (categorically)
+            if self.transform_fn:
+                for i in range(len(aug_masks)):
+                    tgts.append(self.transform_fn(aug_masks[i], self.num_class))
+            else:
+                tgts = tgts + aug_masks  # adding augmented masks
+
+        # converting list to numpy array
+
+        tgts = np.array(tgts)
+        imgs = np.array(imgs)
+
+        # commented out by manik (as self.weights != None it's CFR_CB, so it's deprecated)
+        # return weighted features and lables
+        if self.weights != None:
+            # creating a constant tensor
+            class_weights = tf.constant(self.weights)
+            class_weights = class_weights / tf.reduce_sum(
+                class_weights
+            )  # normalizing the weights
+            # get the weighted target
+            y_weights = tf.gather(
+                class_weights, indices=tf.cast(tgts, tf.int32)
+            )  # ([self.paths[i] for i in indexes])
+
+            return tf.convert_to_tensor(imgs), y_weights
+
+        # return tensor that is converted from numpy array
+        return tf.convert_to_tensor(imgs), tf.convert_to_tensor(tgts)
+        # return imgs, tgts
+
+    def get_random_data(self, idx=-1):
+        """
+        Summary:
+            randomly chose an image and mask or the given index image and mask
+        Arguments:
+            idx (int): specific image index default -1 for random
+        Return:
+            image and mask as numpy array
+        """
+
+        if idx != -1:
+            idx = idx
+        else:
+            idx = np.random.randint(0, len(self.img_dir))
+
+        imgs = []
+        tgts = []
+        if self.patchify:
+            imgs.append(read_img(
+                self.img_dir[idx], in_channels=self.in_channels, patch_idx=self.patch_idx[idx]))
+
+            # transform mask for model
+            if self.transform_fn:
+                tgts.append(
+                    self.transform_fn(
+                        read_img(
+                            self.tgt_dir[idx], label=True, patch_idx=self.patch_idx[idx]
+                        ),
+                        self.num_class,
+                    )
+                )
+            else:
+                tgts.append(
+                    read_img(
+                        self.tgt_dir[idx], label=True, patch_idx=self.patch_idx[idx]
+                    )
+                )
+
+        # commented out by manik (as patchify is false it's CFR or CFR_CB, so it's deprecated)
+        else:
+            imgs.append(read_img(self.img_dir[idx], in_channels=self.in_channels))
+
+            # transform mask for model
+            if self.transform_fn:
+                tgts.append(
+                    self.transform_fn(
+                        read_img(self.tgt_dir[idx], label=True), self.num_class
+                    )
+                )
+            else:
+                tgts.append(read_img(self.tgt_dir[idx], label=True))
+
+        return tf.convert_to_tensor(imgs), tf.convert_to_tensor(tgts), idx
+
+
+def get_train_val_dataloader():
+    """
+    Summary:
+        read train and valid image and mask directory and return dataloader
+    Arguments:
+        empty
+    Return:
+        train and valid dataloader
+    """
+    global train_dir, weights
+
+    # creating csv files for train, test and validation
+    if not (os.path.exists(train_dir)):
+        data_csv_gen()
+    # creating jason files for train, test and validation
+    if not (os.path.exists(p_train_dir)) and patchify:
+        print("Saving patchify indices for train and test.....")
+
+        # for training
+        data = pd.read_csv(train_dir)
+
+        if patch_class_balance:
+            patch_images(data, "train_patch_phr_cb_")
+
+        # commented out by manik (as patch_class_balance is false and patchify is True, it's PHR, so it's deprecated)
+        else:
+            patch_images(data, "train_patch_phr_")
+
+        # for validation
+        data = pd.read_csv(config.valid_dir)
+
+        if patch_class_balance:
+            patch_images(data, "valid_patch_phr_cb_")
+
+        # commented out by manik (as patch_class_balance is false and patchify is True, it's PHR, so it's deprecated)
+        else:
+            patch_images(data, "valid_patch_phr_")
+
+    # initializing train, test and validatinn for patch images
+    if patchify:
+        print("Loading Patchified features and masks directories.....")
+        with open(p_train_dir, "r") as j:
+            train_dir = json.loads(j.read())
+        with open(p_valid_dir, "r") as j:
+            valid_dir = json.loads(j.read())
+
+        # selecting which dataset to train and validate
+        train_features = train_dir["feature_ids"]
+        train_masks = train_dir["masks"]
+        valid_features = valid_dir["feature_ids"]
+        valid_masks = valid_dir["masks"]
+        train_idx = train_dir["patch_idx"]
+        valid_idx = valid_dir["patch_idx"]
+
+    # commented out by manik (as patchify is false, it's CFR or CFR_CB, so it's deprecated)
+    # initializing train, test and validatinn for images
+    else:
+        print("Loading features and masks directories.....")
+        train_dir = pd.read_csv(train_dir)
+        valid_dir = pd.read_csv(valid_dir)
+
+        # selecting which dataset to train and validate
+        train_features = train_dir.feature_ids.values
+        train_masks = train_dir.masks.values
+        valid_features = valid_dir.feature_ids.values
+        valid_masks = valid_dir.masks.values
+        train_idx = None
+        valid_idx = None
+
+    print("---------------------------------------------------")
+    print("train Example : {}".format(len(train_features)))
+    print("valid Example : {}".format(len(valid_features)))
+    print("---------------------------------------------------")
+    
+
+    # create Augment object if augment is true
+    if augment and batch_size > 1:
+        augment_obj = Augment(batch_size, in_channels)
+        # new batch size after augment data for train
+        n_batch_size = batch_size - augment_obj.aug_img_batch
+    else:
+        n_batch_size = batch_size
+        augment_obj = None
+
+    # commented out by manik (as weights is true, it's CFR_CB, so it's deprecated) but we need to pass weight as None
+    # new statement by manik
+    # weights = None
+    # get the class weight if weights is true
+    if weights:
+        weights = tf.constant(balance_weights)
+    else:
+        weights = None
+
+    # create dataloader object
+    train_dataset = MyDataset(
+        train_features,
+        train_masks,
+        in_channels=in_channels,
+        patchify=patchify,
+        batch_size=n_batch_size,
+        transform_fn=transform_data,
+        num_class=num_classes,
+        augment=augment_obj,
+        weights=weights,
+        patch_idx=train_idx,
+    )
+
+    val_dataset = MyDataset(
+        valid_features,
+        valid_masks,
+        in_channels=in_channels,
+        patchify=patchify,
+        batch_size=batch_size,
+        transform_fn=transform_data,
+        num_class=num_classes,
+        patch_idx=valid_idx,
+    )
+
+    return train_dataset, val_dataset
+
+
+def get_test_dataloader():
+    """
+    Summary:
+        read test image and mask directory and return dataloader
+    Arguments:
+        None
+    Return:
+        test dataloader
+    """
+    global eval_dir, p_eval_dir, test_dir, p_test_dir
+    
+    if evaluation:
+        var_list = [eval_dir, p_eval_dir]
+        patch_name = "eval_patch_phr_cb_"
+    else:
+        var_list = [test_dir, p_test_dir]
+        patch_name = "test_patch_phr_cb_"
+
+    if not (os.path.exists(var_list[0])):
+        if evaluation:
+            eval_csv_gen()
+        else:
+            data_csv_gen()
+
+    if not (os.path.exists(var_list[1])) and patchify:
+        print(".....................................")
+        print("Saving patchify indices for test.....")
+        print(".....................................")
+        data = pd.read_csv(var_list[0])
+        patch_images(data, patch_name)
+
+    if patchify:
+        print("Loading Patchified features and masks directories.....")
+        with var_list[1].open() as j:
+            test_dir = json.loads(j.read())
+        test_features = test_dir["feature_ids"]
+        test_masks = test_dir["masks"]
+        test_idx = test_dir["patch_idx"]
+
+    else:
+        print("Loading features and masks directories.....")
+        test_dir = pd.read_csv(var_list[0])
+        test_features = test_dir.feature_ids.values
+        test_masks = test_dir.masks.values
+        test_idx = None
+
+    print("---------------------------------------------------")
+    print("test/evaluation Example : {}".format(len(test_features)))
+    print("---------------------------------------------------")
+
+    test_dataset = MyDataset(
+        test_features,
+        test_masks,
+        in_channels=in_channels,
+        patchify=patchify,
+        batch_size=batch_size,
+        transform_fn=transform_data,
+        num_class=num_classes,
+        patch_idx=test_idx,
+    )
+
+    return test_dataset
