@@ -8,7 +8,7 @@ import tensorflow_addons as tfa
 from dataset import get_train_val_dataloader
 from tensorflow.keras.models import load_model
 from model import get_model, get_model_transfer_lr
-from utils import SelectCallbacks, create_paths, rename_files
+from utils import SelectCallbacks, create_paths
 
 tf.config.optimizer.set_jit("True")
 
@@ -22,6 +22,7 @@ parser.add_argument("--epochs", type=int)
 parser.add_argument("--batch_size", type=int)
 parser.add_argument("--experiment")
 parser.add_argument("--gpu")
+parser.add_argument("--transfer_lr")
 
 args = parser.parse_args()
 
@@ -59,8 +60,7 @@ print("Class Weigth = {}".format(str(weights)))
 print("Experiment = {}".format(str(experiment)))
 print("--------------------------------------------------------\n")
 
-if rename:
-    rename_files(dataset_dir)
+
 
 # Dataset
 # ----------------------------------------------------------------------------------------------

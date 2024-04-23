@@ -7,9 +7,8 @@ from metrics import *
 from tensorflow import keras
 from dataset import get_test_dataloader
 from tensorflow.keras.models import load_model
-from utils import create_paths, test_eval_show_predictions, frame_to_video, rename_files
+from utils import create_paths, test_eval_show_predictions, frame_to_video
 
-# python test.py --root_dir /mnt/hdd2/mdsamiul/project/imseg_csml --model_name fapnet --load_model_name fapnet_ex_patchify_WOC_256_epochs_2000_12-Apr-22.hdf5 --gpu 0
 # Parsing variable
 # ----------------------------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
@@ -30,10 +29,7 @@ index = args.index if args.index is not None else index
 experiment = args.experiment if args.experiment is not None else experiment
 gpu = args.gpu if args.gpu is not None else gpu
 video_path = args.video_path if args.video_path is not None else video_path
-# if args.evaluation == "True":
-#     evaluation = True
-# else:
-#     evaluation = False
+
 
 print(f"root_dir:{root_dir} model_name: {model_name}  load_model_name:{load_model_name} \ index:{index}\ experiment:{experiment}\ gpu:{gpu}\ evaluation:{evaluation}\video_path:{video_path}")
 
@@ -44,7 +40,6 @@ t0 = time.time()
 
 # Set up test configaration
 # ----------------------------------------------------------------------------------------------
-print(evaluation)
 if evaluation:
     create_paths(eval=True)
     print("evaluation")
@@ -67,8 +62,7 @@ print("Loading model {} from {}".format(load_model_name, load_model_dir))
 model = load_model((load_model_dir / load_model_name), compile=False)
 
 
-if rename:
-    rename_files(dataset_dir)
+
 # Dataset
 # ----------------------------------------------------------------------------------------------
 test_dataset = get_test_dataloader()

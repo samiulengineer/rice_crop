@@ -63,9 +63,9 @@ def get_metrics():
     m = MyMeanIOU(num_classes)
     return {
         'MyMeanIOU': m,
-        'f1-score': tfa.metrics.F1Score(num_classes=2, average="micro", threshold=0.9),
-        'precision': sm.metrics.precision,
-        'recall': sm.metrics.recall,
+        # 'f1-score': tfa.metrics.F1Score(num_classes=2, average="micro", threshold=0.9),
+        # 'precision': sm.metrics.precision,
+        # 'recall': sm.metrics.recall,
         'dice_coef_score':dice_coef_score
         # "keras_MIOU" : tf.keras.metrics.MeanIoU(num_classes=2)
     }
